@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Handwritten Math Recognizer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=asset_version('static/style.css')) }}">
+</head>
+<body>
+    <main class="app-shell">
+        <header class="hero">
+            <p class="eyebrow">Math Recognition</p>
+            <h1>Recognize handwritten math expressions</h1>
+            <p class="subtitle">Upload an image or draw directly on the canvas, then review the detected expression, result, and annotated recognition output.</p>
+        </header>
+
+        <section class="layout">
+            <article class="card">
+                <div class="tabbar">
+                    <button class="tab active" id="tab-upload" data-mode="upload" type="button">Upload</button>
+                    <button class="tab" id="tab-draw" data-mode="draw" type="button">Draw</button>
+                </div>
+
+                <section id="upload-panel">
+                    <label class="dropzone" id="drop-zone" for="file-input">
+                        <input type="file" id="file-input" accept="image/*" hidden>
+                        <div class="dropzone-title">Choose an image, drag and drop it, or press Ctrl+V</div>
+                        <p>Best results come from clear images with a bright background and enough spacing between characters.</p>
+                    </label>
+
+                    <div class="preview hidden" id="preview-container">
+                        <img id="image-preview" src="" alt="Input preview image">
+                        <div class="preview-meta">
+                            <span id="file-name">No image selected</span>
+                            <span id="file-size">-</span>
+                        </div>
+                        <div class="row-actions">
+                            <button class="btn btn-light" id="replace-btn" type="button">Replace Image</button>
+                            <button class="btn btn-light" id="clear-btn" type="button">Clear</button>
+                            <button class="btn btn-primary" id="analyze-btn" type="button">Analyze</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="draw-panel" class="hidden">
+                    <div class="canvas-wrap">
+                        <canvas id="drawing-canvas" width="960" height="360" aria-label="Expression drawing canvas"></canvas>
+                    </div>
+                    <p class="hint">Draw dark strokes on a white background and leave a little space between characters so the model can separate them more reliably.</p>
+                    <div class="row-actions">
+                        <button class="btn btn-light" id="clear-canvas" type="button">Clear Canvas</button>
+                        <button class="btn btn-primary" id="analyze-canvas" type="button">Analyze Canvas</button>
+                    </div>
+                </section>
+            </article>
+
+            <article class="card result-card">
+                <div id="empty-state" class="state">
+                    <h2>No result yet</h2>
+                    <p>Upload an image or draw an expression to get started.</p>
+                </div>
+
+                <div id="loading" class="state hidden">
+                    <div class="spinner"></div>
+                    <h2>Analyzing</h2>
+                    <p>The backend is segmenting the image and recognizing each character.</p>
+                </div>
+
+                <div id="result-content" class="hidden">
+                    <div class="result-box">
+                        <div class="result-row">
+                            <span>Expression</span>
+                            <strong id="res-expr">N/A</strong>
+                        </div>
+                        <div class="result-row">
+                            <span>Result</span>
+                            <strong id="res-ans">N/A</strong>
+                        </div>
+                    </div>
+
+                    <div class="line-results hidden" id="line-results"></div>
+
+                    <div class="message error hidden" id="res-error"></div>
+                    <div class="message note hidden" id="res-note"></div>
+
+                    <div class="image-panel">
+                        <div class="image-panel-head">
+                            <h3>Recognition Output</h3>
+                            <span id="prediction-summary">No data yet</span>
+                        </div>
+                        <img id="bbox-img" src="" alt="Annotated recognition result">
+                    </div>
+
+                    <div class="review-panel">
+                        <div class="image-panel-head">
+                            <h3>Correct Segmented Characters</h3>
+                            <span id="feedback-summary">No characters loaded</span>
+                        </div>
+                        <p class="hint">Click a segmented character if the prediction looks wrong, then enter the correct label below to save feedback for retraining.</p>
+                        <div class="character-strip" id="character-strip"></div>
+
+                        <div class="feedback-editor hidden" id="feedback-editor">
+                            <div class="feedback-selected">
+                                <img id="feedback-preview" src="" alt="Selected segmented character">
+                                <div>
+                                    <strong id="feedback-selected-char">-</strong>
+                                    <p id="feedback-selected-meta">Select a segmented character to correct it.</p>
+                                    <p id="feedback-topk" class="feedback-topk">Model top-k will appear here.</p>
+                                </div>
+                            </div>
+
+                            <label class="feedback-label" for="feedback-input">Correct label</label>
+                            <input id="feedback-input" class="feedback-input" type="text" maxlength="1" placeholder="Type 0-9 or +-*/()">
+
+                            <div class="class-picker" id="class-picker"></div>
+
+                            <div class="row-actions">
+                                <button class="btn btn-light" id="apply-correction" type="button">Apply Correction</button>
+                                <button class="btn btn-danger" id="remove-segment" type="button">Remove Segment</button>
+                                <button class="btn btn-light" id="reset-correction" type="button">Reset Character</button>
+                                <button class="btn btn-primary" id="submit-feedback" type="button">Save Feedback</button>
+                            </div>
+
+                            <p class="hint">Saved corrections go into retraining labels. Removed segments are stored separately so bad crops do not pollute the training dataset.</p>
+                        </div>
+
+                        <div class="message error hidden" id="feedback-error"></div>
+                        <div class="message note hidden" id="feedback-note"></div>
+                    </div>
+                </div>
+            </article>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js', v=asset_version('static/script.js') ) }}"></script>
+</body>
+</html>
