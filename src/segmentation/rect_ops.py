@@ -344,6 +344,65 @@ def _rect_fill_ratio(rect, thresh_img):
     roi = thresh_img[max(0, y):y + h, max(0, x):x + w]
     return float(np.count_nonzero(roi)) / max(1.0, float(w * h))
 
+def _is_dash_like_fragment(rect, thresh_img, median_h, median_w):
+    x, y, w, h = rect
+    if w < max(10.0, median_w * 0.18):
+        return False
+    if w > max(30.0, median_w * 0.70):
+        return False
+    if h > max(6.0, median_h * 0.16):
+        return False
+
+    aspect = w / max(1.0, float(h))
+    if aspect < 2.6:
+        return False
+
+    fill_ratio = _rect_fill_ratio(rect, thresh_img)
+    return fill_ratio >= 0.18
+
+
+def _is_x_like_fragment(rect, thresh_img, median_h, median_w):
+    x, y, w, h = rect
+    if w < max(18.0, median_w * 0.55) or w > max(44.0, median_w * 1.20):
+        return False
+    if h < max(18.0, median_h * 0.24) or h > max(46.0, median_h * 0.72):
+        return False
+
+    aspect = w / max(1.0, float(h))
+    if not (0.60 <= aspect <= 1.40):
+        return False
+
+    roi = thresh_img[max(0, y):y + h, max(0, x):x + w]
+    if roi.size == 0:
+        return False
+
+    fill_ratio = np.count_nonzero(roi) / max(1.0, float(roi.size))
+    if not (0.18 <= fill_ratio <= 0.55):
+        return False
+
+    binary = (roi > 0).astype(np.float32)
+    hh, ww = binary.shape[:2]
+    half_h = max(1, hh // 2)
+    half_w = max(1, ww // 2)
+    third_h = max(1, hh // 3)
+    third_w = max(1, ww // 3)
+
+    tl = binary[:half_h, :half_w]
+    tr = binary[:half_h, ww - half_w:]
+    bl = binary[hh - half_h:, :half_w]
+    br = binary[hh - half_h:, ww - half_w:]
+    center = binary[third_h:hh - third_h, third_w:ww - third_w]
+    diag_primary = float(tl.mean()) + float(br.mean())
+    diag_secondary = float(tr.mean()) + float(bl.mean())
+    center_fill = float(center.mean()) if center.size else 0.0
+
+    return (
+        center_fill >= 0.35
+        and diag_primary >= 0.52
+        and diag_secondary >= 0.52
+        and abs(diag_primary - diag_secondary) <= 0.25
+    )
+
 def _count_connected_components_in_roi(roi):
     if roi is None or getattr(roi, "size", 0) == 0:
         return 0
@@ -656,6 +715,11 @@ def _should_merge_offset_satellite_pair(r1, r2, thresh_img, median_h, median_w):
     if combined_h > max(170.0, median_h * 1.35):
         return False
     if not (near_left_side or near_right_side):
+        return False
+
+    if _is_dash_like_fragment((sx, sy, sw, sh), thresh_img, median_h, median_w):
+        return False
+    if _is_x_like_fragment((sx, sy, sw, sh), thresh_img, median_h, median_w):
         return False
 
     roi = thresh_img[combined_y0:combined_y1, combined_x0:combined_x1]

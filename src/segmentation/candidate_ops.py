@@ -713,6 +713,67 @@ def _collect_component_rects_with_line_recovery(binary, w_img, h_img):
 
     return sorted(combined, key=lambda rect: rect[0])
 
+def _recover_operator_component_rects(binary, existing_rects, w_img, h_img):
+    if binary is None or getattr(binary, "size", 0) == 0:
+        return []
+
+    component_mask = (binary > 0).astype(np.uint8)
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(component_mask, connectivity=8)
+    components = []
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+        h = int(stats[label, cv2.CC_STAT_HEIGHT])
+        if area < 8 or w < 2 or h < 3:
+            continue
+        components.append((x, y, w, h))
+
+    if not components:
+        return []
+
+    reference_rects = existing_rects if existing_rects else components
+    med_w = float(np.median([rect[2] for rect in reference_rects])) if reference_rects else 0.0
+    med_h = float(np.median([rect[3] for rect in reference_rects])) if reference_rects else 0.0
+    row_center = float(np.median([rect[1] + rect[3] / 2.0 for rect in reference_rects])) if reference_rects else (h_img / 2.0)
+
+    recovered = []
+    base_rects = existing_rects or []
+    for rect in components:
+        if any(_rect_overlap_ratio(rect, existing) >= 0.72 for existing in base_rects):
+            continue
+
+        x, y, w, h = rect
+        fill_ratio = _rect_fill_ratio(rect, binary)
+        aspect = w / max(1.0, float(h))
+        cy = y + h / 2.0
+        near_row = abs(cy - row_center) <= max(18.0, med_h * 1.05)
+
+        dash_like = (
+            near_row
+            and w >= max(10.0, med_w * 0.22)
+            and w <= max(42.0, med_w * 1.05)
+            and h <= max(6.0, med_h * 0.18)
+            and aspect >= 2.2
+            and fill_ratio >= 0.18
+        )
+        slash_like = (
+            near_row
+            and x > 3
+            and (x + w) < (w_img - 3)
+            and h >= max(24.0, med_h * 1.20, h_img * 0.68)
+            and w >= max(8.0, med_w * 0.18)
+            and w <= max(28.0, med_w * 0.85)
+            and aspect <= 0.42
+            and 0.08 <= fill_ratio <= 0.40
+        )
+
+        if dash_like or slash_like:
+            recovered.append(rect)
+
+    return sorted(recovered, key=lambda rect: rect[0])
+
 def _propose_expression_regions(thresh, w_img, h_img):
     rects = _collect_component_rects_with_line_recovery(thresh, w_img, h_img)
     if not rects:
@@ -1036,8 +1097,11 @@ def _segment_generic_region(thresh, region, w_img, h_img):
                     continue
                 combined.append(rect)
             rects_local = sorted(combined, key=lambda rect: rect[0])
+
     if not rects_local:
-        return []
+        rects_local = _recover_operator_component_rects(roi, [], roi_w, roi_h)
+        if not rects_local:
+            return []
 
     rects_local = _split_wide_rects(rects_local, roi)
     if rects_local:
@@ -1046,6 +1110,16 @@ def _segment_generic_region(thresh, region, w_img, h_img):
         rects_local = _merge_broken_parts(sorted(rects_local, key=lambda r: r[0]), med_h, med_w)
         rects_local = _merge_single_digit_pairs(rects_local, roi)
         rects_local = _remove_inside_boxes(rects_local)
+
+        operator_rects = _recover_operator_component_rects(roi, rects_local, roi_w, roi_h)
+        if operator_rects:
+            combined = list(rects_local)
+            for rect in operator_rects:
+                if any(_rect_overlap_ratio(rect, existing) >= 0.72 for existing in combined):
+                    continue
+                combined.append(rect)
+            rects_local = sorted(combined, key=lambda rect: rect[0])
+
         rects_local = _operator_preserving_filter(rects_local, roi, roi_w, roi_h)
         rects_local = _keep_dominant_band_row(rects_local)
 
@@ -1195,7 +1269,22 @@ def _select_best_upload_candidate(candidates, w_img, h_img):
         ),
         reverse=True,
     )
-    return scored[0], scored
+
+    best = scored[0]
+    region_candidate = next((item for item in scored if item.get("name") == "region"), None)
+    if region_candidate is not None and best.get("name") != "region":
+        rect_gain = len(region_candidate.get("rects") or []) - len(best.get("rects") or [])
+        score_gap = float(best["selection_score"]) - float(region_candidate["selection_score"])
+        best_span = float(best.get("selection_metrics", {}).get("span_ratio", 0.0))
+        region_span = float(region_candidate.get("selection_metrics", {}).get("span_ratio", 0.0))
+        if (
+            rect_gain >= 3
+            and score_gap <= 1.5
+            and region_span >= best_span - 0.03
+        ):
+            best = region_candidate
+
+    return best, scored
 
 def _tighten_region_to_row_band(thresh_img, region, min_peak_ratio=0.25, pad_ratio=0.12):
     if thresh_img is None or getattr(thresh_img, "size", 0) == 0 or region is None:

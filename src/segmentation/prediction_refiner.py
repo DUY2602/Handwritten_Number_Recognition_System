@@ -101,6 +101,20 @@ def _looks_like_slash(features):
     )
 
 
+def _looks_like_slash_fragment(features):
+    diagonal_margin = features["diag_secondary"] - features["diag_primary"]
+    return (
+        features["holes"] == 0
+        and 0.15 <= features["fill"] <= 0.30
+        and 0.42 <= features["center"] <= 0.62
+        and features["center_row"] <= 0.30
+        and features["center_col"] <= 0.32
+        and features["diag_secondary"] >= 0.72
+        and diagonal_margin >= 0.62
+        and features["diag_primary"] <= 0.12
+    )
+
+
 def _looks_like_lparen(features):
     return (
         features["holes"] == 0
@@ -354,6 +368,14 @@ def _has_near_top_model_support(
 
 def _should_drop_noise(item, median_area, median_height):
     features = item["features"]
+    if (
+        item["char"] == "-"
+        and item["conf"] >= 0.95
+        and _looks_like_minus(features)
+        and features["rect_w"] >= max(10.0, median_height * 0.16)
+    ):
+        return False
+
     if item["conf"] < 0.55 and features["rect_area"] < max(25.0, median_area * 0.1):
         return True
     if (
@@ -665,6 +687,18 @@ def _map_numeric_char(item):
     if raw_char in {"7", "2"} and _looks_like_three_override(features):
         return "3"
 
+    if (
+        raw_char == "5"
+        and features["holes"] == 0
+        and features["aspect"] >= 0.68
+        and features["left"] >= features["right"] * 1.35
+        and features["top"] <= 0.24
+        and features["bottom"] >= features["top"] * 1.75
+        and features["center"] >= 0.24
+        and features["center_col"] <= 0.36
+    ):
+        return "6"
+
     if raw_char == "6" and features["left"] >= features["right"] * 1.08:
         return "6"
 
@@ -719,6 +753,36 @@ def _override_char(item, prev_char=None, next_char=None):
     looks_like_close_boundary = _looks_like_close_boundary(features)
 
     if (
+        raw_char in {"1", "/", "(", ")"}
+        and looks_like_one
+        and not looks_like_open_boundary
+        and not looks_like_close_boundary
+        and not _looks_like_slash(features)
+    ):
+        return "1"
+
+    if (
+        raw_char == "+"
+        and prev_char in TERM_END_CHARS
+        and next_char in TERM_START_CHARS
+        and _has_near_top_model_support(item, "*", min_conf=0.25, max_gap=0.20)
+        and features["center"] >= 0.48
+        and features["diag_primary"] >= 0.52
+        and features["diag_secondary"] >= 0.52
+        and abs(features["diag_primary"] - features["diag_secondary"]) <= 0.32
+    ):
+        return "*"
+
+    if (
+        raw_char in {"1", "7", "-", "(", ")"}
+        and _looks_like_slash(features)
+        and prev_char in TERM_END_CHARS
+        and next_char in TERM_START_CHARS
+        and not looks_like_one
+    ):
+        return "/"
+
+    if (
         raw_char in {"4", "*", "+"}
         and _looks_like_star(features)
         and prev_char in TERM_END_CHARS
@@ -727,7 +791,7 @@ def _override_char(item, prev_char=None, next_char=None):
         return "*"
 
     if (
-        raw_char == "/"
+        raw_char in {"/", "(", ")"}
         and _looks_like_slash(features)
         and prev_char in TERM_END_CHARS
         and next_char in TERM_START_CHARS
@@ -735,7 +799,7 @@ def _override_char(item, prev_char=None, next_char=None):
         return "/"
 
     if (
-        raw_char in {"1", "7", "/"}
+        raw_char in {"1", "7", "/", "(", ")"}
         and _looks_like_slash(features)
         and _has_near_top_model_support(item, "/", min_conf=0.25, max_gap=0.08)
         and prev_char in TERM_END_CHARS
@@ -744,7 +808,7 @@ def _override_char(item, prev_char=None, next_char=None):
         return "/"
 
     if (
-        raw_char in {"1", "7"}
+        raw_char in {"1", "7", "(", ")"}
         and _looks_like_thin_slash_override(features)
         and prev_char in TERM_END_CHARS
         and next_char in TERM_START_CHARS
@@ -752,7 +816,7 @@ def _override_char(item, prev_char=None, next_char=None):
         return "/"
 
     if (
-        raw_char in {"1", "7"}
+        raw_char in {"1", "7", "(", ")"}
         and _looks_like_strong_slash_override(features)
         and prev_char in TERM_END_CHARS
         and next_char in TERM_START_CHARS
@@ -760,7 +824,7 @@ def _override_char(item, prev_char=None, next_char=None):
         return "/"
 
     if (
-        raw_char in {"1", "7"}
+        raw_char in {"1", "7", "(", ")"}
         and conf < 0.995
         and _looks_like_slash_override(features)
         and prev_char in TERM_END_CHARS
@@ -769,7 +833,7 @@ def _override_char(item, prev_char=None, next_char=None):
         return "/"
 
     if (
-        raw_char in {"(", "1"}
+        raw_char in {"(", ")", "1", "/"}
         and looks_like_open_boundary
         and not looks_like_one
         and _has_model_support(item, "(", min_conf=0.07, allow_when_missing=True)
@@ -778,7 +842,7 @@ def _override_char(item, prev_char=None, next_char=None):
         return "("
 
     if (
-        raw_char in {")", "1", "7"}
+        raw_char in {"(", ")", "1", "7", "/"}
         and looks_like_close_boundary
         and not looks_like_one
         and _has_model_support(item, ")", min_conf=0.08, allow_when_missing=True)
@@ -835,6 +899,66 @@ def _merge_items_as_star(left_item, right_item):
     )
     return {
         "char": "*",
+        "conf": max(left_item["conf"], right_item["conf"]),
+        "raw_char": f"{left_item['char']}{right_item['char']}",
+        "raw_conf": max(left_item["conf"], right_item["conf"]),
+        "top_k": [],
+        "rect": merged_rect,
+        "adjusted": True,
+    }
+
+
+def _should_merge_as_slash(left_item, right_item, prev_char, next_char, median_height):
+    if prev_char not in TERM_END_CHARS or next_char not in TERM_START_CHARS:
+        return False
+
+    if {left_item["char"], right_item["char"]} - {"1", "-", "/", "(", ")"}:
+        return False
+
+    left_features = left_item.get("features")
+    right_features = right_item.get("features")
+    if not left_features or not right_features:
+        return False
+
+    left_slashish = _looks_like_slash(left_features) or _looks_like_slash_fragment(left_features)
+    right_slashish = _looks_like_slash(right_features) or _looks_like_slash_fragment(right_features)
+    if not (left_slashish and right_slashish):
+        return False
+
+    lx, ly, lw, lh = left_item["rect"]
+    rx, ry, rw, rh = right_item["rect"]
+    gap = max(0, rx - (lx + lw))
+    if gap > max(4.0, median_height * 0.08):
+        return False
+
+    left_cx = lx + (lw / 2.0)
+    left_cy = ly + (lh / 2.0)
+    right_cx = rx + (rw / 2.0)
+    right_cy = ry + (rh / 2.0)
+    if right_cx <= left_cx or right_cy >= left_cy:
+        return False
+
+    combined_w = max(lx + lw, rx + rw) - min(lx, rx)
+    combined_h = max(ly + lh, ry + rh) - min(ly, ry)
+    if combined_w > max(120.0, median_height * 2.40):
+        return False
+    if combined_h > max(140.0, median_height * 2.80):
+        return False
+
+    return True
+
+
+def _merge_items_as_slash(left_item, right_item):
+    lx, ly, lw, lh = left_item["rect"]
+    rx, ry, rw, rh = right_item["rect"]
+    merged_rect = (
+        min(lx, rx),
+        min(ly, ry),
+        max(lx + lw, rx + rw) - min(lx, rx),
+        max(ly + lh, ry + rh) - min(ly, ry),
+    )
+    return {
+        "char": "/",
         "conf": max(left_item["conf"], right_item["conf"]),
         "raw_char": f"{left_item['char']}{right_item['char']}",
         "raw_conf": max(left_item["conf"], right_item["conf"]),
@@ -937,17 +1061,20 @@ def _candidate_char_scores(item):
         and not looks_like_one
         and _has_model_support(item, "(", min_conf=0.07, allow_when_missing=True)
     ):
-        _add("(", 0.83 if current_char in {"(", "1", "6"} else 0.78)
+        _add("(", 0.83 if current_char in {"(", ")", "1", "/", "6"} else 0.78)
 
     if (
         looks_like_close_boundary
         and not looks_like_one
         and _has_model_support(item, ")", min_conf=0.08, allow_when_missing=True)
     ):
-        _add(")", 0.83 if current_char in {")", "1", "7"} else 0.78)
+        _add(")", 0.83 if current_char in {"(", ")", "1", "/", "7"} else 0.78)
 
     if looks_like_one and not (looks_like_open_boundary or looks_like_close_boundary):
-        _add("1", 0.87 if current_char in {"1", "/", "(", ")"} else 0.80)
+        one_score = 0.87 if current_char in {"1", "/", "(", ")"} else 0.80
+        if _has_near_top_model_support(item, "1", min_conf=0.18, max_gap=0.16, allow_when_missing=current_char == "1"):
+            one_score = max(one_score, 0.96 if current_char in {"/", "(", ")"} else 0.90)
+        _add("1", one_score)
 
     return candidates
 
@@ -1218,6 +1345,10 @@ def refine_predictions(rects, roi_images, raw_predictions):
             if i + 1 < len(items):
                 prev_char = items[i - 1]["char"] if i > 0 else None
                 next_char = items[i + 2]["char"] if i + 2 < len(items) else None
+                if _should_merge_as_slash(current, items[i + 1], prev_char, next_char, median_height):
+                    merged.append(_merge_items_as_slash(current, items[i + 1]))
+                    i += 2
+                    continue
                 if _should_merge_as_star(current, items[i + 1], prev_char, next_char, median_height):
                     merged.append(_merge_items_as_star(current, items[i + 1]))
                     i += 2

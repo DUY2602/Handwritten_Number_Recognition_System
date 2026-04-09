@@ -335,15 +335,28 @@ def _extract_vertical_guide_mask(
 def _remove_grid_lines(binary, h_img, w_img):
     """FIX-1: Tách heal ra ngoài subtract, iterations=3."""
     h_len = max(40, int(w_img * 0.25))
-    v_len = max(40, int(h_img * 0.25))
 
     h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (h_len, 1))
-    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, v_len))
 
     h_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel, iterations=1)
-    v_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel, iterations=1)
+    h_lines = cv2.max(
+        h_lines,
+        _extract_horizontal_line_mask(
+            binary,
+            min_span_ratio=0.28,
+            bridge_gap_ratio=0.05,
+            max_line_height_ratio=0.10,
+            lower_bias=False,
+        ),
+    )
+    v_lines = _extract_vertical_guide_mask(
+        binary,
+        min_height_ratio=0.78,
+        max_width_ratio=0.022,
+        repeated_count=4,
+    )
 
-    lines   = cv2.add(h_lines, v_lines)
+    lines = cv2.add(h_lines, v_lines)
     cleaned = cv2.subtract(binary, lines)
     cleaned = cv2.medianBlur(cleaned, 3)
 

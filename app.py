@@ -14,11 +14,7 @@ from flask import Flask, jsonify, render_template, request
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
 from preprocessing.preprocessing import normalize_binary_character
-from segmentation.context_corrector import build_raw_predictions
-from segmentation.operator_classifier import predict_characters_top_k
-from segmentation.expression_parser import build_and_evaluate
-from segmentation.prediction_refiner import refine_predictions_by_line
-from segmentation.segmentation import segment_image
+from segmentation.runtime_pipeline import analyze_expression_image
 
 app = Flask(__name__)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
@@ -144,33 +140,6 @@ def _extract_character_roi(thresh, rect, padding=4):
         return cv2.resize(roi, (28, 28), interpolation=cv2.INTER_NEAREST)
 
 
-def _serialize_top_k(entries):
-    serialized = []
-    for entry in entries or []:
-        char = str((entry or {}).get("char") or "")
-        conf = round(float((entry or {}).get("conf", 0.0)), 6)
-        if not char:
-            continue
-        serialized.append({
-            "char": char,
-            "conf": conf,
-        })
-    return serialized
-
-
-def _build_model_top_k(roi_images, top_k=5):
-    if not roi_images:
-        return []
-
-    try:
-        return [
-            _serialize_top_k(item)
-            for item in predict_characters_top_k(roi_images, normalized=True, top_k=top_k)
-        ]
-    except Exception:
-        return [[] for _ in roi_images]
-
-
 def _analysis_dir(analysis_id):
     return ANALYSES_DIR / analysis_id
 
@@ -260,10 +229,20 @@ def analyze():
         input_mode = "upload"
 
     try:
-        roi_images, rects, thresh, img_display = segment_image(
+        analysis = analyze_expression_image(
             str(file_path),
             input_mode=input_mode,
+            include_model_top_k=True,
+            top_k=5,
         )
+        roi_images = analysis["roi_images"]
+        thresh = analysis["thresh"]
+        img_display = analysis["img_display"]
+        line_predictions = analysis["line_predictions"]
+        expression_str = analysis["expression"]
+        result_str = analysis["result"]
+        error = analysis["error"]
+
         if not roi_images:
             return jsonify({"error": "No characters were detected in the image."}), 400
 
@@ -271,12 +250,6 @@ def analyze():
         if clean_display is not None:
             img_display = clean_display
 
-        raw_predictions = build_raw_predictions(roi_images)
-        model_top_k_predictions = _build_model_top_k(roi_images, top_k=5)
-        for item, top_k in zip(raw_predictions, model_top_k_predictions):
-            item["top_k"] = top_k
-
-        line_predictions = refine_predictions_by_line(rects, roi_images, raw_predictions)
         if not line_predictions:
             return jsonify({
                 "error": "The detected characters could not be grouped into a valid expression line."
@@ -293,11 +266,12 @@ def analyze():
         lines_response = []
         character_index = 0
 
-        for line_idx, line in enumerate(line_predictions):
+        for line_idx, line in enumerate(analysis["lines"]):
             color = LINE_COLORS[line_idx % len(LINE_COLORS)]
             characters = line["characters"]
-            raw_chars = [item["char"] for item in characters]
-            expression_str, result_str, error = build_and_evaluate(raw_chars)
+            line_expression = line["expression"]
+            line_result = line["result"]
+            line_error = line["error"]
 
             line_character_summaries = []
 
@@ -355,22 +329,12 @@ def analyze():
 
             lines_response.append({
                 "line_index": line_idx,
-                "expression": expression_str,
-                "result": result_str,
-                "error": error,
+                "expression": line_expression,
+                "result": line_result,
+                "error": line_error,
                 "characters": line_character_summaries,
                 "rect": _serialize_rect(line["rect"]),
             })
-
-        if len(lines_response) == 1:
-            expression_str = lines_response[0]["expression"]
-            result_str = lines_response[0]["result"]
-            error = lines_response[0]["error"]
-        else:
-            success_count = sum(1 for item in lines_response if not item["error"])
-            expression_str = f"Detected {len(lines_response)} lines"
-            result_str = f"{success_count}/{len(lines_response)} lines evaluated successfully"
-            error = None
 
         _save_json(_analysis_manifest_path(analysis_id), {
             "analysis_id": analysis_id,

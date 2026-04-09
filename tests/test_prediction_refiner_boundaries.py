@@ -27,6 +27,20 @@ def _draw_right_paren():
     return image
 
 
+def _draw_slash():
+    image = np.zeros((28, 28), dtype=np.uint8)
+    cv2.line(image, (8, 22), (20, 6), 255, 2)
+    return image
+
+
+def _draw_one():
+    image = np.zeros((28, 28), dtype=np.uint8)
+    cv2.line(image, (13, 4), (13, 24), 255, 2)
+    cv2.line(image, (10, 8), (13, 5), 255, 2)
+    cv2.line(image, (10, 24), (16, 24), 255, 2)
+    return image
+
+
 def _load_feedback_image(*parts):
     path = Path(__file__).resolve().parents[1].joinpath(*parts)
     image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
@@ -247,3 +261,71 @@ def test_draw_mode_open_paren_like_six_without_support_stays_six():
     }
 
     assert prediction_refiner._override_char(item, prev_char=None, next_char="6") == "6"
+
+
+def test_slash_label_with_one_shape_becomes_one():
+    prediction_refiner = _load_prediction_refiner()
+    image = _draw_one()
+    features = prediction_refiner._extract_features(image, (0, 0, image.shape[1], image.shape[0]))
+    item = {
+        "char": "/",
+        "raw_char": "/",
+        "conf": 0.56,
+        "raw_conf": 0.56,
+        "top_k": _make_top_k(
+            ("/", 0.56),
+            ("1", 0.41),
+            ("(", 0.02),
+            (")", 0.01),
+        ),
+        "features": features,
+    }
+
+    assert prediction_refiner._looks_like_one(features)
+    assert not prediction_refiner._looks_like_open_boundary(features)
+    assert not prediction_refiner._looks_like_close_boundary(features)
+    assert prediction_refiner._override_char(item, prev_char=None, next_char="5") == "1"
+
+
+def test_slash_label_with_open_paren_shape_becomes_open_paren():
+    prediction_refiner = _load_prediction_refiner()
+    image = _draw_left_paren()
+    features = prediction_refiner._extract_features(image, (0, 0, image.shape[1], image.shape[0]))
+    item = {
+        "char": "/",
+        "raw_char": "/",
+        "conf": 0.54,
+        "raw_conf": 0.54,
+        "top_k": _make_top_k(
+            ("/", 0.54),
+            ("(", 0.33),
+            ("1", 0.09),
+            (")", 0.03),
+        ),
+        "features": features,
+    }
+
+    assert prediction_refiner._looks_like_open_boundary(features)
+    assert prediction_refiner._override_char(item, prev_char=None, next_char="6") == "("
+
+
+def test_open_paren_label_with_slash_shape_becomes_slash():
+    prediction_refiner = _load_prediction_refiner()
+    image = _draw_slash()
+    features = prediction_refiner._extract_features(image, (0, 0, image.shape[1], image.shape[0]))
+    item = {
+        "char": "(",
+        "raw_char": "(",
+        "conf": 0.57,
+        "raw_conf": 0.57,
+        "top_k": _make_top_k(
+            ("(", 0.57),
+            ("/", 0.38),
+            ("1", 0.03),
+            (")", 0.02),
+        ),
+        "features": features,
+    }
+
+    assert prediction_refiner._looks_like_slash(features)
+    assert prediction_refiner._override_char(item, prev_char="5", next_char="6") == "/"
