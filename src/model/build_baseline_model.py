@@ -1,6 +1,18 @@
-import tensorflow as tf
+import json
+import sys
+import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
+from pathlib import Path
+from datetime import datetime, timezone
+
+CURRENT_DIR = Path(__file__).resolve().parent
+MODEL_DIR = CURRENT_DIR
+SRC_DIR = MODEL_DIR.parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from model.operator_classifier import _default_class_names
 
 # VGG-style 8-layer CNN architecture used to train
 
@@ -65,31 +77,41 @@ def create_model(input_shape=(28, 28, 1), num_classes=16):
     
     return model
 
+DATASET_DIR = CURRENT_DIR / "artifacts" / "dataset"
+MODELS_DIR = CURRENT_DIR / "artifacts" / "models"
+
 if __name__ == "__main__":
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
     print("[INFO] Building VGG-style 8-Layer CNN Baseline Model...")
     model = create_model()
     model.summary()
 
-import numpy as np
-from pathlib import Path
+    print("[INFO] Loading dataset from .npy files in 'artifacts/dataset'...")
+    x_train = np.load(DATASET_DIR / "x_train.npy")
+    y_train = np.load(DATASET_DIR / "y_train.npy")
+    x_val = np.load(DATASET_DIR / "x_val.npy")
+    y_val = np.load(DATASET_DIR / "y_val.npy")
 
-CURRENT_DIR = Path(__file__).resolve().parent
-DATASET_DIR = CURRENT_DIR / "artifacts" / "dataset"
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=1e-3),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"]
+    )
 
-print("[INFO] Loading dataset from .npy files in 'artifacts/dataset'...")
-x_train = np.load(DATASET_DIR / "x_train.npy")
-y_train = np.load(DATASET_DIR / "y_train.npy")
-x_val = np.load(DATASET_DIR / "x_val.npy")
-y_val = np.load(DATASET_DIR / "y_val.npy")
+    print(f"[INFO] Training model on {len(x_train)} samples...")
+    model.fit(x_train, y_train, epochs=30, batch_size=128, validation_data=(x_val, y_val))
 
-model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=1e-3),
-    loss="sparse_categorical_crossentropy",
-    metrics=["accuracy"]
-)
-
-print(f"[INFO] Training model on {len(x_train)} samples...")
-model.fit(x_train, y_train, epochs=30, batch_size=128, validation_data=(x_val, y_val))
-
-model.save(CURRENT_DIR / "artifacts" / "models" / "best_expression_model.keras")
-print("[INFO] Baseline model saved successfully!")
+    model_path = MODELS_DIR / "best_expression_model.keras"
+    model.save(model_path)
+    
+    # Save class mapping and metadata for runtime use
+    summary_path = MODELS_DIR / "training_summary.json"
+    summary = {
+        "class_names": _default_class_names(),
+        "model_architecture": "VGG-style 8-layer CNN",
+        "num_classes": 16,
+        "training_completed_at": datetime.now(timezone.utc).isoformat()
+    }
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    
+    print(f"[INFO] Baseline model and metadata saved to {MODELS_DIR}")

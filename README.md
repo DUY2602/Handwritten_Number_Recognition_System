@@ -1,48 +1,36 @@
-# COS30018-HNRS-OptionB
+# Handwritten Math Expression Recognition System
 
-Handwritten math expression recognition project with a Flask web UI, a CLI pipeline, character segmentation, expression parsing, and evaluation utilities.
+A comprehensive end-to-end pipeline for recognizing handwritten mathematical expressions. This system integrates advanced image processing, deep learning classification, and a context-aware expression parser into a user-friendly Flask web interface.
 
-## Current repository state
+## 🚀 Key Features
 
-- The web app in `app.py` is the main entry point.
-- Runtime character prediction uses the Keras model at `src/model/artifacts/models/best_expression_model.keras`.
-- Segmentation may save ROI/debug artifacts locally while the pipeline runs, but those generated files should stay out of version control.
-- Extra upload/debug images are treated as generated local artifacts and should stay out of version control.
-- User feedback from the web UI is stored under `src/model/artifacts/feedback/`.
-- Feedback is only collected and logged right now. It does not retrain the model automatically.
-- `src/segmentation/operator_classifier.py` still contains some legacy PyTorch training code, but the web app runtime uses only the Keras model under `src/model/artifacts/models/`.
+- **Dual-Mode Interface:** Supports both image uploads (phone photos) and direct drawing on a digital canvas.
+- **Advanced Segmentation:** Robust multi-stage segmentation that handles notebook ruling lines, overlapping characters, and fragmented strokes.
+- **VGG-style Classifier:** A deep Convolutional Neural Network (CNN) trained on a massive combined dataset (MNIST, EMNIST, and custom operators).
+- **Contextual Post-Processing:** Uses geometric and sequence logic to resolve ambiguous characters (e.g., distinguishing '1' from '-' or '7' from '/').
+- **Feedback Loop:** A built-in system to collect user corrections and rejections to improve future model training.
+- **Evaluation Suite:** Comprehensive metrics including Accuracy, Precision, Recall, and Confusion Matrices.
 
-## Project structure
+## 📂 Project Structure
 
 ```text
-app.py
-src/
-  main.py
-  evaluation/
-    evaluation.py
-  model/
-    artifacts/
-      dataset/
-      feedback/
-      models/
-  preprocessing/
-    preprocessing.py
-  segmentation/
-    expression_parser.py
-    main_extension.py
-    operator_classifier.py
-    prediction_refiner.py
-    segmentation.py
-static/
-  uploads/
-  script.js
-  style.css
-templates/
-  index.html
-tests/
-  test_draw_mode_regression.py
-  test_prediction_refiner_boundaries.py
-  test_segmentation_threshold.py
+├── app.py                      # Flask Web Application entry point
+├── requirements.txt            # Project dependencies
+├── setup_env.bat               # One-click install and run script
+├── static/                     # Web assets (JS, CSS, Uploads)
+├── templates/                  # HTML templates
+└── src/
+    ├── main.py                 # CLI entry point for batch processing
+    ├── model/                  # Classification & Training logic
+    │   ├── artifacts/          # Trained models, datasets, and feedback data
+    │   ├── evaluation/         # Model and Pipeline evaluation scripts
+    │   ├── build_baseline.py   # Script to train the Keras VGG model
+    │   └── operator_classifier.py # Dataset merging & Prediction API
+    ├── preprocessing/          # Image normalization & ROI cleaning
+    └── segmentation/           # Character extraction & Expression parsing
+        ├── segmentation.py     # Main segmentation engine
+        ├── rect_ops.py         # Box merging and splitting logic
+        └── expression_parser.py # Math logic and validation
 ```
 
 ## Main modules
