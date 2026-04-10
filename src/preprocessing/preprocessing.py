@@ -63,13 +63,6 @@ def _to_ink_map(image_input):
     return cv2.subtract(255, gray)
 
 
-def to_ink_map(image_input):
-    """
-    Backward-compatible public alias for older imports.
-    """
-    return _to_ink_map(image_input)
-
-
 def _binary_score(binary):
     foreground = int(np.count_nonzero(binary))
     if foreground == 0:

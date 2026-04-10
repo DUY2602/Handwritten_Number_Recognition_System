@@ -30,33 +30,33 @@ def _to_ink_map(img):
 
 def _normalize_background(ink_map):
     """
-    FIX-A: Loại bỏ gradient sáng/tối trải rộng (như Image 2, 3).
+    FIX-A: Remove wide spread bright/dark gradients (as in Image 2, 3).
 
-    Ý tưởng: ước tính background bằng cách blur rất mạnh (morphological CLOSE
-    với kernel rất lớn), sau đó trừ nó ra. Kết quả: nét mực nổi đều dù background
-    tối/sáng không đồng đều.
+    Idea: estimate background using strong blur (morphological CLOSE
+    with very large kernel), then subtract it. Result: uniform ink 
+    strokes even if background is uneven.
 
-    Lưu ý: chỉ áp dụng khi std của ink_map cao (tức là có gradient mạnh).
-    Nếu ảnh đã đều thì bỏ qua để tránh artifacts.
+    Note: only apply when ink_map std is high (strong gradient).
+    If image is already uniform, skip to avoid artifacts.
     """
     std = float(np.std(ink_map))
     if std < 18.0:
-        # Ảnh đã đủ đều, không cần normalize background
+        # Image is already uniform, background normalization not required
         return ink_map
 
-    # Kernel size = 1/6 chiều nhỏ hơn, tối thiểu 61px, phải lẻ
+    # Kernel size = 1/6 smaller dimension, min 61px, must be odd
     h, w = ink_map.shape
     k = max(61, int(min(h, w) / 6) | 1)
     
-    # [OPTIMIZATION] Morphological filter với kernel lớn (k > 100) trên ảnh phân giải cao
-    # cực kỳ chậm. Ta sẽ thu nhỏ ảnh, filter trên ảnh nhỏ, rồi phóng to lại.
+    # [OPTIMIZATION] Morphological filter with large kernel (k > 100) on high 
+    # resolution images is extremely slow. We downscale, filter, then upscale.
     max_dim = max(h, w)
     if max_dim > 600:
         scale = 600.0 / max_dim
         small_w, small_h = int(w * scale), int(h * scale)
         small_ink = cv2.resize(ink_map, (small_w, small_h), interpolation=cv2.INTER_AREA)
         
-        # Scale kernel tương ứng, tối thiểu 11px
+        # Scale kernel accordingly, min 11px
         small_k = max(11, int(k * scale) | 1)
         
         bg_est_small = cv2.morphologyEx(
@@ -72,15 +72,15 @@ def _normalize_background(ink_map):
             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
         )
 
-    # BUG FIX: phép divide loại gradient đúng cách, không invert
-    # ink_map convention: CAO = mực, THẤP = nền
-    # bg_est ≈ background (thấp ở vùng mực vì MORPH_CLOSE lấp đầy)
-    # Sau divide: vùng mực (ink cao, bg thấp) → tỉ lệ cao → nét mực nổi đều
+    # BUG FIX: divide operation removes gradient correctly, no inversion
+    # ink_map convention: HIGH = ink, LOW = background
+    # bg_est ≈ background (low in ink areas as MORPH_CLOSE fills them)
+    # After divide: ink area (high ink, low bg) -> high ratio -> uniform ink strokes
     bg_f   = np.clip(bg_est.astype(np.float32), 1.0, 255.0)
     ink_f  = ink_map.astype(np.float32)
     normalized = np.clip((ink_f / bg_f) * 128.0, 0, 255).astype(np.uint8)
 
-    # Sanity check: nếu normalize lại bị tối (mean < 5) → bg_est quá thấp → fallback
+    # Sanity check: if normalized result is dark (mean < 5) -> bg_est too low -> fallback
     if float(np.mean(normalized)) < 5.0:
         print("[BG-NORM] fallback to original ink_map (normalized image too dark)")
         return ink_map
@@ -93,10 +93,10 @@ def _normalize_background(ink_map):
 
 def _enhance(ink_map):
     """
-    FIX-4: CLAHE clipLimit thích nghi theo độ sáng.
-    FIX-A: Thêm _normalize_background() trước CLAHE.
+    FIX-4: CLAHE clipLimit adapted to brightness.
+    FIX-A: Add _normalize_background() before CLAHE.
     """
-    # FIX-A: normalize trước
+    # FIX-A: normalize first
     ink_map = _normalize_background(ink_map)
 
     mean_brightness = float(np.mean(ink_map))
@@ -332,8 +332,88 @@ def _extract_vertical_guide_mask(
         mask[y:y + h, x:x + w] = cv2.max(mask[y:y + h, x:x + w], seed[y:y + h, x:x + w])
     return mask
 
+def _preserve_short_horizontal_strokes(binary, line_mask, w_img=None, h_img=None):
+    """
+    Keep short dense pen strokes from being erased together with notebook lines.
+
+    The printed ruling line is usually thin and uniform. A handwritten minus or
+    plus arm adds a compact horizontal blob on top of that line, so we carve
+    those local spans back out of the line mask before subtraction.
+    """
+    if (
+        binary is None
+        or line_mask is None
+        or getattr(binary, "size", 0) == 0
+        or getattr(line_mask, "size", 0) == 0
+        or np.count_nonzero(line_mask) == 0
+    ):
+        return line_mask
+
+    if h_img is None or w_img is None:
+        h_img, w_img = binary.shape[:2]
+
+    preserved = line_mask.copy()
+    contours, _ = cv2.findContours(line_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    max_candidate_width = max(42, int(round(w_img * 0.12)))
+
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w < max(64, int(round(w_img * 0.45))):
+            continue
+
+        pad = max(2, min(6, h + 2))
+        y0 = max(0, y - pad)
+        y1 = min(h_img, y + h + pad)
+
+        band_binary = binary[y0:y1, x:x + w]
+        band_mask = preserved[y0:y1, x:x + w]
+        if band_binary.size == 0 or band_mask.size == 0:
+            continue
+
+        extra_ink = cv2.subtract(band_binary, band_mask)
+        if np.count_nonzero(extra_ink) == 0:
+            continue
+
+        extra_ink = cv2.morphologyEx(
+            extra_ink,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1)),
+            iterations=1,
+        )
+
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+            (extra_ink > 0).astype(np.uint8),
+            connectivity=8,
+        )
+
+        for label in range(1, num_labels):
+            area = int(stats[label, cv2.CC_STAT_AREA])
+            cx = int(stats[label, cv2.CC_STAT_LEFT])
+            cw = int(stats[label, cv2.CC_STAT_WIDTH])
+            ch = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+            if area < 8 or cw < 8 or cw > max_candidate_width:
+                continue
+            if ch > max(6, int(round((y1 - y0) * 0.72))):
+                continue
+            if cx <= 1 or (cx + cw) >= (w - 1):
+                continue
+
+            fill_ratio = area / max(1.0, float(cw * ch))
+            aspect = cw / max(1.0, float(ch))
+            line_overlap = np.count_nonzero(band_mask[:, cx:cx + cw])
+
+            if fill_ratio < 0.18 or aspect < 2.2:
+                continue
+            if line_overlap < max(4, cw):
+                continue
+
+            preserved[y0:y1, x + cx:x + cx + cw] = 0
+
+    return preserved
+
 def _remove_grid_lines(binary, h_img, w_img):
-    """FIX-1: Tách heal ra ngoài subtract, iterations=3."""
+    """FIX-1: Separate heal from subtract, iterations=3."""
     h_len = max(40, int(w_img * 0.25))
 
     h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (h_len, 1))
@@ -361,7 +441,7 @@ def _remove_grid_lines(binary, h_img, w_img):
     cleaned = cv2.medianBlur(cleaned, 3)
 
     n_removed = int(np.count_nonzero(lines))
-    print(f"[LINE] Da xoa ~{n_removed} pixel duong ke bang/dong.")
+    print(f"[LINE] Removed ~{n_removed} notebook/ruling line pixels.")
     return cleaned
 
 def _binarize_canvas_strokes(gray, h_img, w_img):

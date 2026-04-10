@@ -1,5 +1,6 @@
 from .segmentation import segment_image
 
+
 __all__ = [
     "segment_image",
     "build_corrected_predictions",
@@ -20,7 +21,7 @@ def __getattr__(name):
         namespace = {
             "build_corrected_predictions": build_corrected_predictions,
             "build_raw_predictions": build_raw_predictions,
-            "correct_sequence": correct_sequence,
+            "correct_sequence": correct_sequence, # context_corrector is still in src/segmentation
         }
         return namespace[name]
     if name == "build_and_evaluate":
@@ -31,8 +32,8 @@ def __getattr__(name):
         from .main_extension import run_expression_pipeline
 
         return run_expression_pipeline
-    if name == "predict_character":
-        from .operator_classifier import predict_character
+    if name == "predict_character": # operator_classifier moved to src/model
+        from model.operator_classifier import predict_character
 
         return predict_character
     if name in {"refine_predictions", "refine_predictions_by_line"}:

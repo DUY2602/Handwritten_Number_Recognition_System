@@ -195,13 +195,13 @@ def correct_sequence(
 def _resolve_predict_fn(predict_fn=None):
     if predict_fn is None:
         try:
-            from segmentation.operator_classifier import predict_character as _predict
+            from model.operator_classifier import predict_character as _predict # operator_classifier moved to src/model
         except ImportError as exc:
-            raise ImportError("Could not import operator_classifier.predict_character.") from exc
+            raise ImportError("Could not import model.operator_classifier.predict_character.") from exc
         predict_fn = _predict
 
     def _wrapped_predict_fn(roi, normalized=True):
-        try:
+        try: # dual_head_utils is still in src/segmentation
             return predict_fn(roi, normalized=normalized)
         except TypeError:
             return predict_fn(roi)
@@ -212,9 +212,9 @@ def _resolve_predict_fn(predict_fn=None):
 def _resolve_predict_top_k_fn(predict_top_k_fn=None):
     if predict_top_k_fn is None:
         try:
-            from segmentation.operator_classifier import predict_characters_top_k as _predict_top_k
+            from model.operator_classifier import predict_characters_top_k as _predict_top_k # operator_classifier moved to src/model
         except ImportError as exc:
-            raise ImportError("Could not import operator_classifier.predict_characters_top_k.") from exc
+            raise ImportError("Could not import model.operator_classifier.predict_characters_top_k.") from exc
         predict_top_k_fn = _predict_top_k
 
     def _wrapped_predict_top_k_fn(roi_images, normalized=True, top_k=5):

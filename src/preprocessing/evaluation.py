@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import argparse
 import json
 from dataclasses import dataclass
@@ -18,11 +19,12 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-CURRENT_DIR = Path(__file__).resolve().parent
-SRC_DIR = CURRENT_DIR.parent
-PROJECT_ROOT = SRC_DIR.parent
-if str(SRC_DIR) not in sys.path:
-    sys.path.append(str(SRC_DIR))
+CURRENT_DIR = Path(__file__).resolve().parent # src/model/evaluation
+MODEL_DIR = CURRENT_DIR.parent # src/model
+SRC_DIR = MODEL_DIR.parent # src
+PROJECT_ROOT = SRC_DIR.parent # project root
+if str(SRC_DIR) not in sys.path: # Ensure src is in path for absolute imports
+    sys.path.insert(0, str(SRC_DIR))
 
 
 @dataclass
@@ -193,10 +195,10 @@ def evaluate(
 # EVALUATION 1 - Runtime Keras model on saved dataset arrays
 # ================================================================
 
-RUNTIME_MODEL_PATH = PROJECT_ROOT / "src" / "model" / "artifacts" / "models" / "best_expression_model.keras"
-RUNTIME_DATASET_DIR = PROJECT_ROOT / "src" / "model" / "artifacts" / "dataset"
-RUNTIME_SUMMARY_PATH = PROJECT_ROOT / "src" / "model" / "artifacts" / "models" / "training_summary.json"
-EVAL_ARTIFACTS_DIR = PROJECT_ROOT / "eval_artifacts"
+RUNTIME_MODEL_PATH = MODEL_DIR / "artifacts" / "models" / "best_expression_model.keras"
+RUNTIME_DATASET_DIR = MODEL_DIR / "artifacts" / "dataset"
+RUNTIME_SUMMARY_PATH = MODEL_DIR / "artifacts" / "models" / "training_summary.json"
+EVAL_ARTIFACTS_DIR = PROJECT_ROOT / "eval_artifacts" # This can stay at project root
 
 
 def _load_runtime_class_names() -> List[str]:
@@ -350,7 +352,7 @@ def evaluate_pytorch_model(
     image_folder: str = "src/segmentation/output_digit",
     expected_chars: Optional[Sequence[str]] = None,
 ):
-    """
+    """ 
     Evaluate character model on ROIs in output_digit/.
     expected_chars: list of correct characters in order, e.g., ['3','+','5'].
     If None -> print results only, do not calculate accuracy.
@@ -369,7 +371,7 @@ def evaluate_pytorch_model(
     image_list = sorted([f for f in os.listdir(image_folder) if f.endswith(".png")])
     if not image_list:
         print("[ERROR] Không có ảnh nào trong folder!")
-        return None
+        return None 
 
     print(f"\n  {'File':<20} | {'Predicted':<10} | {'Confidence':<12} | {'Expected':<10} | Result")
     print("  " + "-" * 72)
@@ -402,13 +404,13 @@ def evaluate_pytorch_model(
 # ================================================================
 
 def _default_segment_fn(image_path: str, input_mode: str = "upload"):
-    from segmentation.segmentation import segment_image
+    from segmentation.segmentation import segment_image # segmentation is still in src/segmentation
 
     return segment_image(image_path, debug=False, input_mode=input_mode)
 
 
 def _default_predict_fn(roi: np.ndarray, normalized: bool = True) -> Tuple[str, float]:
-    from segmentation.operator_classifier import predict_character
+    from model.operator_classifier import predict_character # operator_classifier moved to src/model
 
     return predict_character(roi, normalized=normalized)
 
@@ -550,15 +552,15 @@ def dump_segmentation_artifacts(
 
 
 def _build_line_predictions(roi_images, rects, predict_fn=None):
-    from segmentation.context_corrector import build_raw_predictions
-    from segmentation.prediction_refiner import refine_predictions_by_line
+    from segmentation.context_corrector import build_raw_predictions # context_corrector is still in src/segmentation
+    from segmentation.prediction_refiner import refine_predictions_by_line # prediction_refiner is still in src/segmentation
 
     raw_predictions = build_raw_predictions(roi_images, predict_fn=predict_fn)
     return refine_predictions_by_line(rects, roi_images, raw_predictions)
 
 
 def _evaluate_line_predictions(line_predictions):
-    from segmentation.expression_parser import build_and_evaluate
+    from segmentation.expression_parser import build_and_evaluate # expression_parser is still in src/segmentation
 
     if not line_predictions:
         return "", None, "No valid expression lines were produced."
@@ -592,7 +594,7 @@ def evaluate_pipeline(test_cases: Sequence[Dict[str, Any]]):
     test_cases = [
         {"image": "input_image/test1.jpg", "expected_expr": "3+5", "expected_result": "8"},
     ]
-    """
+    """ 
     from segmentation.segmentation import segment_image
 
     print("=" * 60)

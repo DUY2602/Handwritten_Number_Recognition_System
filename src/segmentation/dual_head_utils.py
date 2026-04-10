@@ -1,15 +1,15 @@
 """
 dual_head_utils.py
 ==================
-Aspect-ratio pre-filter và dual-head scoring cho digit + operator classification.
+Aspect-ratio pre-filter and dual-head scoring for digit + operator classification.
 
-Vị trí trong pipeline (thay thế predict_character trực tiếp):
+Position in pipeline (directly replaces predict_character):
     from dual_head_utils import predict_with_dual_head
     char, conf = predict_with_dual_head(roi, normalized=True)
 
-Yêu cầu:
-    - operator_classifier.predict_character  (đã có sẵn)
-    - MNIST / digit model thông qua operator_classifier (đã có sẵn)
+Requirements:
+    - operator_classifier.predict_character  (already available)
+    - MNIST / digit model via operator_classifier (already available)
 """
 
 from __future__ import annotations
@@ -19,30 +19,30 @@ from typing import Tuple
 import cv2
 import numpy as np
 
-# ─── Hằng số cấu hình ────────────────────────────────────────────────────────
+# ─── Configuration constants ────────────────────────────────────────────────────────
 
-# Aspect ratio w/h của ROI sau khi normalize về tight bounding box
-_ASPECT_DIGIT_MIN   = 0.20   # số "1" rất hẹp
-_ASPECT_DIGIT_MAX   = 1.80   # số "0" hơi rộng hơn cao
-_ASPECT_OP_MINUS    = (2.5, 9.0)   # "-" : rất rộng
-_ASPECT_OP_EQUAL    = (1.8, 6.0)   # "=" : rộng, gồm 2 nét
-_ASPECT_OP_PLUS     = (0.6, 1.6)   # "+" : gần vuông
-_ASPECT_OP_MUL      = (0.5, 1.8)   # "×" : gần vuông
-_ASPECT_OP_DIV      = (0.3, 1.0)   # "÷" : cao hơn rộng
+# Aspect ratio w/h of ROI after normalization to tight bounding box
+_ASPECT_DIGIT_MIN   = 0.20   # digit "1" is very narrow
+_ASPECT_DIGIT_MAX   = 1.80   # digit "0" is slightly wider than high
+_ASPECT_OP_MINUS    = (2.5, 9.0)   # "-" : very wide
+_ASPECT_OP_EQUAL    = (1.8, 6.0)   # "=" : wide, consisting of 2 strokes
+_ASPECT_OP_PLUS     = (0.6, 1.6)   # "+" : near square
+_ASPECT_OP_MUL      = (0.5, 1.8)   # "×" : near square
+_ASPECT_OP_DIV      = (0.3, 1.0)   # "÷" : higher than wide
 
-# Ngưỡng confidence tối thiểu để chấp nhận prediction
+# Minimum confidence threshold to accept prediction
 CONF_THRESHOLD = 0.45
 
-# Ký tự hay bị nhầm và aspect ratio để phân biệt
+# Commonly confused characters and aspect ratio for distinction
 # Format: (char_a, char_b, aspect_threshold, "a_if_below" / "b_if_below")
 _AMBIGUOUS_ASPECT_RULES = [
-    # "1" (hẹp) vs "-" (ngang) — nếu h > w×1.5 thì là "1"
+    # "1" (narrow) vs "-" (horizontal) — if h > w×1.5 then it's "1"
     ("1", "-",  1.0, "below_is_digit"),
-    # "7" (nghiêng) vs "/" (nghiêng) — "/" thường cao hơn rộng hơn "7"
+    # "7" (slanted) vs "/" (slanted) — "/" usually taller/wider than "7"
     ("7", "/",  0.8, "below_is_op"),
 ]
 
-# Operator symbols bao gồm cả dạng Unicode và ASCII
+# Operator symbols including both Unicode and ASCII forms
 OPERATOR_CHARS = {"+", "-", "×", "÷", "/", "=", "*", "x", "X"}
 DIGIT_CHARS    = set("0123456789")
 
@@ -50,7 +50,7 @@ DIGIT_CHARS    = set("0123456789")
 # ─── Helper: tight aspect ratio từ binary image ──────────────────────────────
 
 def _tight_aspect(roi: np.ndarray) -> float:
-    """Tính w/h của tight bounding box (loại bỏ padding trắng)."""
+    """Calculate w/h of tight bounding box (removes white padding)."""
     binary = np.where(roi > 0, 255, 0).astype(np.uint8)
     coords = cv2.findNonZero(binary)
     if coords is None:
@@ -61,9 +61,9 @@ def _tight_aspect(roi: np.ndarray) -> float:
 
 def _pixel_symmetry(roi: np.ndarray) -> float:
     """
-    Đo tính đối xứng ngang: ký tự '-' và '=' có nét tập trung ở giữa chiều cao,
-    trong khi '1' và '/' có nét trải đều từ trên xuống dưới.
-    Trả về tỉ lệ pixel trong 40% giữa / tổng pixel (0→1).
+    Measure horizontal symmetry: '-' and '=' have strokes concentrated at middle height,
+    while '1' and '/' have strokes spread from top to bottom.
+    Return pixel ratio in the middle 40% / total pixels (0→1).
     """
     if roi.size == 0 or np.count_nonzero(roi) == 0:
         return 0.5
@@ -77,8 +77,8 @@ def _pixel_symmetry(roi: np.ndarray) -> float:
 
 def _stroke_density_split(roi: np.ndarray) -> float:
     """
-    Tỉ lệ giữa số hàng "active" và tổng hàng.
-    '=' và '-' có ít hàng active (nét nằm ngang), '1' có nhiều hàng active.
+    Ratio between "active" rows and total rows.
+    '=' and '-' have few active rows (horizontal stroke), '1' has many active rows.
     """
     if roi.size == 0:
         return 0.5
@@ -90,33 +90,33 @@ def _stroke_density_split(roi: np.ndarray) -> float:
 
 def aspect_prefilter(roi: np.ndarray) -> str | None:
     """
-    Dựa trên hình dạng thuần túy, loại bỏ các khả năng hiển nhiên sai.
+    Based on pure shape, eliminate obvious false possibilities.
 
     Returns:
-        "digit"    — chắc chắn là chữ số
-        "operator" — chắc chắn là toán tử
-        None       — không chắc, cần dùng model
+        "digit"    — certainly a digit
+        "operator" — certainly an operator
+        None       — not sure, need model
     """
     aspect = _tight_aspect(roi)
     symmetry = _pixel_symmetry(roi)
     density  = _stroke_density_split(roi)
 
-    # Nằm ngang rõ ràng (w >> h): chỉ có thể là "-" hoặc "="
+    # Clearly horizontal (w >> h): can only be "-" or "="
     if aspect >= _ASPECT_OP_MINUS[0]:
         return "operator"
 
-    # Gần vuông với symmetry cao (nhiều pixel ở giữa): có thể là "+" hoặc "×"
+    # Near square with high symmetry (many pixels in middle): could be "+" or "×"
     if 0.65 <= aspect <= 1.55 and symmetry >= 0.55 and density >= 0.55:
         return "operator"
 
-    # Hẹp và cao: "1", "/", "÷"
+    # Narrow and tall: "1", "/", "÷"
     if aspect < 0.35 and density >= 0.65:
-        # Không thể kết luận ngay — cần model
+        # Cannot conclude immediately — need model
         return None
 
-    # Aspect ratio trong khoảng bình thường của digit
+    # Aspect ratio within normal digit range
     if _ASPECT_DIGIT_MIN <= aspect <= _ASPECT_DIGIT_MAX:
-        return None  # Cần model xác nhận
+        return None  # Need model confirmation
 
     return None
 
@@ -130,17 +130,17 @@ def resolve_ambiguous_pair(
     context: str,
 ) -> str:
     """
-    Khi model trả về char với confidence thấp và char/alt_char là cặp hay nhầm,
-    dùng geometric features để chọn cái đúng hơn.
+    When model returns char with low confidence and char/alt_char are commonly confused pairs,
+    use geometric features to select the correct one.
 
     Args:
-        char     : ký tự model predict
-        alt_char : ký tự alternative (cặp hay nhầm)
-        roi      : ảnh 28×28 binary
+        char     : predicted character from model
+        alt_char : alternative character (confused pair)
+        roi      : 28×28 binary image
         context  : "expected_digit" | "expected_operator"
 
     Returns:
-        Ký tự đã được resolve.
+        Resolved character.
     """
     aspect   = _tight_aspect(roi)
     symmetry = _pixel_symmetry(roi)
@@ -148,36 +148,36 @@ def resolve_ambiguous_pair(
 
     pair = frozenset([char, alt_char])
 
-    # Cặp "1" vs "-"
+    # Pair "1" vs "-"
     if pair == frozenset(["1", "-"]):
-        # "-" nằm ngang: aspect cao, symmetry cao, density thấp
-        # "1" thẳng đứng: aspect thấp, density cao
+        # "-" horizontal: high aspect, high symmetry, low density
+        # "1" vertical: low aspect, high density
         if aspect >= 2.0 and symmetry >= 0.60:
             return "-"
         if aspect < 0.8 and density >= 0.60:
             return "1"
-        # Dùng context làm tiebreaker
+        # Use context as tiebreaker
         return "1" if context == "expected_digit" else "-"
 
-    # Cặp "7" vs "/"
+    # Pair "7" vs "/"
     if pair == frozenset(["7", "/"]):
-        # "/" không có nét ngang ở trên, "7" có
+        # "/" has no top horizontal stroke, "7" does
         top_density = float(np.count_nonzero(roi[:roi.shape[0] // 4])) / max(1, roi.shape[0] // 4 * roi.shape[1])
         if top_density >= 0.10:
-            return "7"   # Có nét ngang trên = "7"
+            return "7"   # Has top horizontal stroke = "7"
         return "/" if context == "expected_operator" else "7"
 
-    # Cặp "×" vs "x" / "X"
+    # Pair "×" vs "x" / "X"
     if pair in (frozenset(["×", "x"]), frozenset(["×", "X"]), frozenset(["x", "X"])):
         return "×" if context == "expected_operator" else char
 
-    # Cặp "0" vs "O" (nếu model nhận cả alphanumeric)
+    # Pair "0" vs "O" (if model accepts alphanumeric)
     if pair == frozenset(["0", "O"]):
         return "0" if context == "expected_digit" else char
 
-    # Cặp "+" vs "t"
+    # Pair "+" vs "t"
     if pair == frozenset(["+", "t"]):
-        # "+" có nét ngang ngay giữa; "t" có nét ngang ở khoảng 1/3 trên
+        # "+" has horizontal stroke in middle; "t" has horizontal stroke at top 1/3
         center_y = int(roi.shape[0] * 0.45)
         top_y    = int(roi.shape[0] * 0.25)
         center_row_density = float(np.count_nonzero(roi[center_y - 2:center_y + 2]))
@@ -194,42 +194,42 @@ def resolve_ambiguous_pair(
 def predict_with_dual_head(
     roi: np.ndarray,
     normalized: bool = True,
-    predict_fn=None,
+    predict_fn=None, # operator_classifier moved to src/model
 ) -> Tuple[str, float]:
     """
-    Wrapper quanh predict_character gốc, thêm:
-    1. Aspect-ratio pre-filter (loại bỏ dự đoán không hợp lý theo hình dạng)
-    2. Geometric tiebreaker cho các cặp hay nhầm
+    Wrapper around original predict_character, adding:
+    1. Aspect-ratio pre-filter (eliminate unreasonable predictions based on shape)
+    2. Geometric tiebreaker for commonly confused pairs
 
     Args:
-        roi         : ảnh 28×28 đã normalize (white-on-black)
-        normalized  : True nếu roi đã là 28×28 binary chuẩn
+        roi         : normalized 28×28 image (white-on-black)
+        normalized  : True if roi is already standard 28x28 binary
         predict_fn  : callable(roi, normalized) → (char, conf)
-                      Nếu None, import operator_classifier.predict_character tự động
+                      If None, import operator_classifier.predict_character automatically
 
     Returns:
-        (char, conf) đã được cải thiện
+        Improved (char, conf)
     """
     if predict_fn is None:
         try:
-            from segmentation.operator_classifier import predict_character as _default_predict
+            from model.operator_classifier import predict_character as _default_predict # operator_classifier moved to src/model
             predict_fn = _default_predict
         except ImportError:
             raise ImportError(
-                "Không tìm thấy operator_classifier. "
-                "Truyền predict_fn vào hoặc đảm bảo PYTHONPATH đúng."
+                "model.operator_classifier not found. "
+                "Pass predict_fn or ensure PYTHONPATH is correct."
             )
 
     char, conf = predict_fn(roi, normalized=normalized)
 
-    # ── 1. Aspect hint: nếu prefilter cho thấy không khớp, giảm confidence ──
+    # ── 1. Aspect hint: if prefilter shows mismatch, reduce confidence ──
     hint = aspect_prefilter(roi)
     if hint == "digit" and char in OPERATOR_CHARS:
         conf *= 0.60
     elif hint == "operator" and char in DIGIT_CHARS:
         conf *= 0.60
 
-    # ── 2. Với confidence thấp, thử resolve ambiguous pairs ──────────────────
+    # ── 2. With low confidence, try resolving ambiguous pairs ──────────────────
     if conf < 0.75:
         aspect = _tight_aspect(roi)
 
@@ -268,8 +268,8 @@ def predict_sequence_dual_head(
     predict_fn=None,
 ) -> list:
     """
-    Predict toàn bộ sequence ROI, trả về list {"char": str, "conf": float}.
-    Dùng thay thế vòng lặp predict_character trong app.py.
+    Predict entire ROI sequence, return list of {"char": str, "conf": float}.
+    Substitute for predict_character loop in app.py.
     """
     results = []
     for roi in roi_images:

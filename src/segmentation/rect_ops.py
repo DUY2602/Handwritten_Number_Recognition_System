@@ -67,7 +67,7 @@ def _should_merge(r1, r2, median_h, median_w):
     return vertically_close or horizontally_close or small_neighbor
 
 def _merge_broken_parts(rects, median_h, median_w):
-    """FIX-C: truyền median_w vào _should_merge."""
+    """FIX-C: pass median_w into _should_merge."""
     if len(rects) < 2:
         return rects
 
@@ -92,7 +92,7 @@ def _merge_broken_parts(rects, median_h, median_w):
                     x, y, w, h = nx, ny, max(x+w, xj+wj)-nx, max(y+h, yj+hj)-ny
                     used[j] = True
                     changed  = True
-                    print(f"[MERGE] Gop manh X={xj} vao cum X={x}")
+                    print(f"[MERGE] Merged fragment X={xj} into cluster X={x}")
                     break
         merged.append((x, y, w, h))
 
@@ -153,7 +153,7 @@ def _remove_inside_boxes(rects, thresh_img=None, w_img=None, h_img=None):
             )
             if wrapper_like:
                 remove_indices.add(i)
-                print(f"[INSIDE] Xoa wrapper box tai X={x1}")
+                print(f"[INSIDE] Deleted wrapper box at X={x1}")
                 continue
 
         if containers:
@@ -168,7 +168,7 @@ def _remove_inside_boxes(rects, thresh_img=None, w_img=None, h_img=None):
             )
             if tiny_inside:
                 remove_indices.add(i)
-                print(f"[INSIDE] Xoa hop nho nam trong hop lon tai X={x1}")
+                print(f"[INSIDE] Deleted small box inside large box at X={x1}")
 
     return [
         rect
@@ -178,14 +178,14 @@ def _remove_inside_boxes(rects, thresh_img=None, w_img=None, h_img=None):
 
 def _filter_rects(rects, thresh_img, w_img, h_img):
     """
-    FIX-3: Ngưỡng area tương đối (scale theo median).
-    FIX-B: Lọc bleed-through bằng fill_ratio tuyệt đối thấp.
+    FIX-3: Relative area threshold (scaled by median).
+    FIX-B: Filter bleed-through using low absolute fill_ratio.
 
-    Bleed-through (chữ thấm qua trang, Image 1) có đặc điểm:
-    - Bounding box vừa phải (không nhỏ, không lớn)
-    - fill_ratio rất thấp (< 0.06) vì nét mờ, đứt đoạn nhiều
-    - Thường nằm ở hàng khác với số chính
-    Lọc chúng bằng cách chặn fill_ratio < 0.06 với box không quá nhỏ.
+    Bleed-through (ink bleeding through the page, Image 1) characteristics:
+    - Moderate bounding box (not small, not large)
+    - Very low fill_ratio (< 0.06) due to faint, broken strokes
+    - Usually located on a different row from main numbers
+    Filter them by blocking fill_ratio < 0.06 for boxes that are not too small.
     """
     if not rects:
         return []
@@ -214,47 +214,46 @@ def _filter_rects(rects, thresh_img, w_img, h_img):
                         or x + w >= w_img - margin_x
                         or y + h >= h_img - margin_y)
 
-        # FIX-3: ngưỡng area tương đối
+        # FIX-3: relative area threshold
         if area < min_area_abs and area < min_area_rel:
-            print(f"[-] Qua nho tai X={x} (area={area})")
+            print(f"[-] Too small at X={x} (area={area})")
             continue
 
-        # FIX-B: lọc bleed-through — fill rất thấp + box không phải quá nhỏ
-        # (box nhỏ đã bị lọc ở trên; box vừa mà fill thấp = bleed-through)
+        # FIX-B: filter bleed-through — very low fill + box not too small
         if (
             fill_ratio < 0.06
             and area > min_area_abs * 2
             and not _looks_like_sparse_seven_box((x, y, w, h), thresh_img, med_h, med_w)
         ):
-            print(f"[-] Bleed-through tai X={x} (fill={fill_ratio:.3f})")
+            print(f"[-] Bleed-through at X={x} (fill={fill_ratio:.3f})")
             continue
 
-        # Đường ngang dài còn sót
+        # Residual long horizontal line
         if (
             aspect >= 6.0
             and w >= max(w_img * 0.18, med_w * 1.4)
             and h <= max(18.0, med_h * 0.65)
             and fill_ratio <= 0.55
         ):
-            print(f"[-] Duong ngang con sot tai X={x}")
+            print(f"[-] Residual horizontal line at X={x}")
             continue
 
-        # Noise nhỏ ở viền
+        # Small border noise
         small_border_blob = (
             area < max(min_area_abs, med_a * 0.12)
             and w < med_w * 0.75
             and h < med_h * 0.75
         )
         if on_border and small_border_blob:
-            print(f"[-] Nhieu vien tai X={x}")
+            print(f"[-] Border noise at X={x}")
             continue
 
-        # Nét viền mỏng dài
+        # Long thin border stroke
         if on_border and fill_ratio <= 0.35 and (
             (aspect >= 4.5 and w >= med_w * 1.2)
             or (inv_aspect >= 4.5 and h >= med_h * 1.2)
         ):
-            print(f"[-] Net mong vien tai X={x}")
+            print(f"[-] Thin border stroke at X={x}")
             continue
 
         kept.append((x, y, w, h))
@@ -1037,15 +1036,15 @@ def _tight_bbox_from_cols(base_x, base_y, roi_part):
 
 def _find_split_valleys(proj, width, valley_threshold=0.40, margin=0.18):
     """
-    Tìm tất cả valley hợp lệ trong vertical projection histogram.
+    Find all valid valleys in vertical projection histogram.
 
-    Trả về list các (valley_x, valley_score) đã sắp xếp theo score tăng dần
-    (score thấp = valley sâu hơn = tốt hơn để cắt).
+    Return a list of (valley_x, valley_score) sorted by ascending score
+    (lower score = deeper valley = better for cutting).
 
     Args:
-        proj       : 1-D float array — số pixel trắng theo từng cột
-        width      : chiều rộng ROI (== len(proj))
-        valley_threshold : tỉ lệ valley/peak_ref tối đa để xem là valid cut
+        proj       : 1-D float array — white pixel count per column
+        width      : ROI width (== len(proj))
+        valley_threshold : max valley/peak_ref ratio to consider a valid cut
         margin     : bỏ qua vùng biên (mỗi bên margin*width)
     """
     if proj.size < 7:
@@ -1065,12 +1064,12 @@ def _find_split_valleys(proj, width, valley_threshold=0.40, margin=0.18):
     if peak_global <= 0:
         return []
 
-    # Tìm local minima trong vùng giữa
+    # Find local minima in the middle zone
     valleys = []
     for i in range(1, len(zone) - 1):
         if zone[i] <= zone[i - 1] and zone[i] <= zone[i + 1]:
             abs_i = i + left
-            # peak reference = max của nửa trái và nửa phải valley
+            # peak reference = max of left and right half of the valley
             left_peak  = float(np.max(smooth[:abs_i]))  if abs_i > 0 else 0.0
             right_peak = float(np.max(smooth[abs_i + 1:])) if abs_i + 1 < len(smooth) else 0.0
             peak_ref   = max(left_peak, right_peak, 1.0)
@@ -1078,19 +1077,19 @@ def _find_split_valleys(proj, width, valley_threshold=0.40, margin=0.18):
             if score <= valley_threshold:
                 valleys.append((abs_i, score))
 
-    # Sắp xếp theo score tăng dần (valley sâu nhất lên đầu)
+    # Sort by ascending score (deepest valley first)
     valleys.sort(key=lambda v: v[1])
     return valleys
 
 def _split_roi_at_valleys(roi, base_x, base_y, valleys, min_segment_w=4):
     """
-    Cắt ROI tại các vị trí valley đã cho, trả về list bounding boxes.
-    Chỉ giữ lại các segment có pixel > 0.
+    Cut ROI at given valley positions, return list of bounding boxes.
+    Keep only segments with pixels > 0.
     """
     if not valleys:
         return None
 
-    # Sắp xếp cut points theo x
+    # Sort cut points by x
     cut_xs = sorted(set(v[0] for v in valleys))
     segments = []
     prev = 0
@@ -1116,10 +1115,10 @@ def _split_roi_at_valleys(roi, base_x, base_y, valleys, min_segment_w=4):
     return result if len(result) >= 2 else None
 
 def _estimate_char_count(w, med_w, med_h=None):
-    """Ước lượng số ký tự trong một box dựa theo tỉ lệ chiều rộng.
+    """Estimate character count in a box based on width ratio.
 
-    FIX: Khi med_w bị inflate do các boxes gộp (chữ to viết gần nhau),
-    dùng med_h làm reference thứ hai vì chữ viết tay thường gần vuông.
+    FIX: When med_w is inflated due to merged boxes (large chars written close together),
+    use med_h as a second reference because handwriting is usually roughly square.
     Lấy estimate nhỏ hơn trong hai cách để tránh oversplit.
     """
     if med_w <= 0:
@@ -1142,8 +1141,8 @@ def _estimate_char_count(w, med_w, med_h=None):
 
 def _cc_split(roi, base_x, base_y, med_h, min_area_ratio=0.01):
     """
-    Fallback: erode nhẹ rồi lấy connected components để cắt.
-    Hữu ích khi hai ký tự chạm nhau nhưng projection không tạo valley rõ ràng.
+    Fallback: slight erosion then take connected components to cut.
+    Useful when two characters touch but projection doesn't create a clear valley.
     """
     sep = cv2.erode(roi, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2)), iterations=1)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(sep, connectivity=8)
@@ -1174,46 +1173,46 @@ def _cc_split(roi, base_x, base_y, med_h, min_area_ratio=0.01):
 
 def _split_single_rect(rect, thresh_img, med_w, med_h):
     """
-    Tách 1 rect rộng thành N ký tự nhỏ hơn.
+    Split 1 wide rect into N smaller characters.
 
-    Chiến lược:
-    1. Ước tính số ký tự kỳ vọng (n_expected).
-    2. Tìm tất cả valleys trong projection histogram.
-    3. Nếu valleys đủ (>= n_expected - 1): chọn n_expected - 1 valleys sâu nhất.
-    4. Nếu không đủ valley: thử CC-split.
-    5. Fallback: chia đều (worst case).
-    6. Đệ quy: nếu segment nào vẫn còn rộng, split tiếp.
+    Strategy:
+    1. Estimate expected character count (n_expected).
+    2. Find all valleys in projection histogram.
+    3. If enough valleys (>= n_expected - 1): choose n_expected - 1 deepest valleys.
+    4. If not enough valleys: try CC-split.
+    5. Fallback: uniform split (worst case).
+    6. Recursion: if any segment is still wide, split again.
 
-    Trả về list bounding boxes, hoặc [rect] nếu không split được.
+    Return list of bounding boxes, or [rect] if cannot split.
     """
     x, y, w, h = rect
     roi = thresh_img[y:y + h, x:x + w]
     if roi.size == 0 or w < 8:
         return [rect]
 
-    # FIX: truyền med_h vào để estimate chính xác hơn khi med_w bị inflate
+    # FIX: pass med_h for more accurate estimation when med_w is inflated
     n_expected = _estimate_char_count(w, med_w, med_h)
     if n_expected < 2:
         return [rect]
 
     n_cuts = n_expected - 1
 
-    # ── Bước 1: Projection-valley split ──────────────────────────────────────
+    # ── Step 1: Projection-valley split ──────────────────────────────────────
     proj    = np.count_nonzero(roi, axis=0).astype(np.float32)
-    # FIX: valley_threshold được tăng lên 0.58 để bắt được các valley nông giữa 2 chữ dính nhau
+    # FIX: valley_threshold increased to 0.58 to catch shallow valleys between touching characters
     valleys = _find_split_valleys(proj, w, valley_threshold=0.58, margin=0.15)
 
     split_result = None
     if len(valleys) >= n_cuts:
-        # Chọn n_cuts valley sâu nhất (score nhỏ nhất)
+        # Choose n_cuts deepest valleys (lowest score)
         chosen_valleys = valleys[:n_cuts]
         split_result = _split_roi_at_valleys(roi, x, y, chosen_valleys)
 
-    # ── Bước 2: CC-split fallback ─────────────────────────────────────────────
+    # ── Step 2: CC-split fallback ─────────────────────────────────────────────
     if split_result is None and n_expected == 2:
         split_result = _cc_split(roi, x, y, med_h)
 
-    # ── Bước 3: Uniform split (worst-case) ────────────────────────────────────
+    # ── Step 3: Uniform split (worst-case) ────────────────────────────────────
     if split_result is None and w >= max(med_w * 1.7, med_h * 0.85):
         seg_w = w // n_expected
         if seg_w >= 4:
@@ -1233,7 +1232,7 @@ def _split_single_rect(rect, thresh_img, med_w, med_h):
     if split_result is None:
         return [rect]
 
-    # ── Bước 4: Đệ quy trên từng segment vẫn còn rộng ────────────────────────
+    # ── Step 4: Recursion on each segment that is still wide ────────────────────────
     final = []
     for seg_rect in split_result:
         sx, sy, sw, sh = seg_rect
@@ -1248,23 +1247,23 @@ def _split_single_rect(rect, thresh_img, med_w, med_h):
 def _split_wide_rects(rects, thresh_img):
     print(f"[SPLIT_WIDE] Input {len(rects)} rects, widths={sorted([r[2] for r in rects])}")
     """
-    Thay thế _split_wide_rects cũ bằng valley-based recursive split.
+    Replace old _split_wide_rects with valley-based recursive split.
 
-    Cải tiến so với phiên bản trước:
-    - Tìm nhiều valley thay vì chỉ lấy 1 điểm thấp nhất ở giữa
-    - Đệ quy: box sau khi cắt vẫn còn rộng sẽ được cắt tiếp
-    - Ước tính số ký tự kỳ vọng để chọn đúng số valley
-    - CC-split và uniform-split làm fallback có thứ tự rõ ràng
+    Improvements over previous version:
+    - Find multiple valleys instead of just taking the lowest point in the middle
+    - Recursion: boxes still wide after cutting will be split further
+    - Estimate expected character count to choose correct number of valleys
+    - CC-split and uniform-split as fallbacks with clear ordering
 
-    FIX: Dùng IQR (interquartile range) thay cho median thuần để tính med_w.
-    Khi có boxes gộp (2 số dính nhau), chúng sẽ có width >> normal,
-    kéo median lên cao → estimate char count thấp → không split đủ.
-    IQR loại trừ các outlier lớn này, cho med_w sát với ký tự đơn hơn.
+    FIX: Use IQR (interquartile range) instead of pure median to calculate med_w.
+    When boxes are merged (2 digits touching), they have width >> normal, 
+    pulling median up -> low estimate char count -> insufficient splitting.
+    IQR excludes these large outliers, giving med_w closer to a single character.
     """
     if len(rects) < 2:
         return rects
 
-    # FIX: dùng IQR để tính med_w ổn định hơn khi có boxes gộp
+    # FIX: use IQR to calculate med_w more stably when boxes are merged
     widths = sorted([r[2] for r in rects])
     n = len(widths)
     q1_idx = max(0, n // 4)
@@ -1277,7 +1276,7 @@ def _split_wide_rects(rects, thresh_img):
 
     for rect in sorted(rects, key=lambda r: r[0]):
         x, y, w, h = rect
-        # FIX: width_threshold không nên phụ thuộc vào med_h vì 1 box có thể rất rộng bất kể chiều cao
+        # FIX: width_threshold shouldn't depend on med_h as a box can be very wide regardless of height
         if w < med_w * 1.70 or h < med_h * 0.50:
             out.append(rect)
             continue

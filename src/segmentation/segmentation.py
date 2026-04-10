@@ -58,7 +58,7 @@ print = lambda *args, **kwargs: log_info_print(*args, logger=logger, **kwargs)
 
 def segment_image(image_path, debug=False, input_mode="upload"):
     """
-    Tách các ký tự từ ảnh chụp điện thoại.
+    Extract characters from a mobile phone image.
 
     Upload mode:
         1. Ink-map + enhance
@@ -70,10 +70,10 @@ def segment_image(image_path, debug=False, input_mode="upload"):
         - Keep the original canvas contour path
 
     Trả về:
-        roi_images  : list[np.ndarray]  — ảnh 28×28 đã chuẩn hóa
-        valid_rects : list[tuple]       — (x, y, w, h) tương ứng
-        thresh      : np.ndarray        — binary sau xử lý
-        img_display : np.ndarray        — ảnh gốc + bounding box
+        roi_images  : list[np.ndarray]  - normalized 28x28 images
+        valid_rects : list[tuple]       - corresponding (x, y, w, h) boxes
+        thresh      : np.ndarray        - processed binary image
+        img_display : np.ndarray        - original image with bounding boxes
     """
     input_mode = str(input_mode or "upload").strip().lower()
     if input_mode not in {"upload", "draw"}:
@@ -89,7 +89,7 @@ def segment_image(image_path, debug=False, input_mode="upload"):
 
     img = read_image_safe(image_path)
     if img is None:
-        print("[ERROR] Khong doc duoc anh.")
+        print("[ERROR] Could not read image.")
         return [], [], None, None
 
     if len(img.shape) == 3 and img.shape[2] == 4:
@@ -97,7 +97,7 @@ def segment_image(image_path, debug=False, input_mode="upload"):
 
     img_display = img.copy() if len(img.shape) == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     h_img, w_img = img.shape[:2]
-    print(f"[INFO] Kich thuoc anh: {w_img}x{h_img}")
+    print(f"[INFO] Image dimensions: {w_img}x{h_img}")
     print(f"[INFO] Input mode: {input_mode}")
 
     filtered = []

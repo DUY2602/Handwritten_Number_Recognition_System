@@ -1,9 +1,9 @@
-Flask
-numpy
-pandas
-matplotlib
-tensorflow
-scikit-learn
+flask
 opencv-python
+numpy
+matplotlib
+scikit-learn
+tensorflow
+keras
 torch
 torchvision

@@ -2,7 +2,12 @@ import cv2
 import numpy as np
 
 from .config import SEGMENTATION_CONFIG
-from .image_ops import _extract_horizontal_line_mask, _extract_vertical_guide_mask, _remove_small_cc
+from .image_ops import (
+    _extract_horizontal_line_mask,
+    _extract_vertical_guide_mask,
+    _preserve_short_horizontal_strokes,
+    _remove_small_cc,
+)
 from .logging_utils import get_logger, log_info_print
 from .rect_ops import (
     _collect_component_rects,
@@ -541,6 +546,7 @@ def _segment_notebook_band_fallback(enhanced, h_img, w_img):
                     lower_bias=False,
                 ),
             )
+            band_lines = _preserve_short_horizontal_strokes(band_thresh, band_lines, band_w, band_h)
             band_thresh = cv2.subtract(band_thresh, band_lines)
             # Additional vertical line removal if needed
             v_line_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(20, int(band_h * 0.15))))
